@@ -9,4 +9,4 @@ Initial folder containing support resources for the Flappy Kiro game.
 ## Resources
 
 - `assets/` - Game audio and sprites
-- `img/` - Screenshots and images
+- `img/` - Screenshots and images# ElasticKIRO
