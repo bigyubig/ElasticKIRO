@@ -1,13 +1,10 @@
 /**
- * GameEngine.js — Main game loop and subsystem coordinator.
+ * GameEngine.js — Main game loop and subsystem coordinator for Ghost Ball Bouncer.
  *
- * Integrates StateManager, PhysicsEngine, EntityManager, CollisionDetector,
- * InputHandler, Renderer, and AudioSystem into a single playable game.
- *
- * Implemented in tasks 14.1-14.5 and 15.1-15.2.
- *
- * Requirements: 1.4, 1.5, 1.6, 2.1, 2.2, 3.6, 4.4, 4.5, 5.x, 6.1, 6.2,
- *               9.1, 9.2, 9.5, 10.1, 10.2, 10.5, 10.6, 10.7
+ * The ball falls under gravity; the player slides the angled pipe left/right to
+ * reflect it back up. On every bounce the pipe swaps with the front of the
+ * supply queue. Surviving longer raises the score; falling off the bottom ends
+ * the game.
  */
 
 import CONFIG from '../config.js';
@@ -23,9 +20,6 @@ import {
   calculateScaleFactor,
 } from '../utils/canvasSizing.js';
 
-/**
- * Coordinates all game subsystems and drives the main loop.
- */
 export class GameEngine {
   /**
    * @param {HTMLCanvasElement} canvas - The game canvas element.
@@ -34,7 +28,7 @@ export class GameEngine {
     /** @type {HTMLCanvasElement} */
     this.canvas = canvas;
 
-    /** @type {number} Scale factor relative to the baseline width (400px). */
+    /** @type {number} Scale factor relative to the baseline width. */
     this.scaleFactor = calculateScaleFactor(canvas.width || CONFIG.baseCanvasWidth);
 
     // ── Subsystems ──────────────────────────────────────────────────────────
@@ -47,21 +41,15 @@ export class GameEngine {
     this.audioSystem = new AudioSystem();
 
     // ── Loop state ──────────────────────────────────────────────────────────
-    /** @type {boolean} Whether init() succeeded and the game may start. */
     this.canStart = false;
-    /** @type {boolean} Whether the rAF loop is currently running. */
     this._running = false;
-    /** @type {number|null} Current requestAnimationFrame handle. */
     this._rafId = null;
 
-    /** @type {HTMLImageElement|null} Cached Ghosty sprite (re-applied on reset). */
+    /** @type {HTMLImageElement|null} Cached ball sprite (re-applied on reset). */
     this._sprite = null;
-    /** @type {string|null} Last error message shown to the player, if any. */
+    /** @type {string|null} */
     this._errorMessage = null;
-    /** @type {number} Remaining invincibility time in frames. */
-    this._invincibleFrames = 0;
 
-    // Bind handlers so they can be added/removed reliably.
     this._frame = this._frame.bind(this);
     this._handleResize = this._handleResize.bind(this);
   }
@@ -69,35 +57,23 @@ export class GameEngine {
   // ── Initialization ─────────────────────────────────────────────────────────
 
   /**
-   * Initialize the engine: size the canvas, validate the viewport, load assets,
-   * wire input, and register the resize listener.
-   *
-   * Resolves once initialization completes. On a critical failure (viewport too
-   * small or image load failure) the engine displays an error and leaves
-   * `canStart` false so the loop will not run.
-   *
-   * Requirements: 5.1, 9.1, 9.2, 9.3, 10.5, 10.6, 10.7
-   *
+   * Initialize the engine: size canvas, create entities, load assets, wire input.
    * @returns {Promise<void>}
    */
   async init() {
     const vw = this._viewportWidth();
     const vh = this._viewportHeight();
 
-    // Size the canvas to fit the viewport (aspect ratio locked, objects scale down).
     this._applyCanvasSize(vw, vh);
 
-    // Create the player entity at its starting position.
-    this.entityManager.createGhosty();
+    // Create the ball and the pipes for the opening (menu) screen.
+    this.entityManager.createBall();
+    this.entityManager.initPipes();
 
-    // Load the Ghosty sprite (critical asset, 10s timeout).
     try {
       this._sprite = await this._loadImage(CONFIG.ghostySpritePath, CONFIG.imageLoadTimeout);
-      const ghosty = this.entityManager.getGhosty();
-      if (ghosty) ghosty.sprite = this._sprite;
-      // Non-critical visual reward sprite.
-      const cakeSprite = await this._loadImage(CONFIG.cakeSpritePath, CONFIG.imageLoadTimeout);
-      this.renderer.cakeSprite = cakeSprite;
+      const ball = this.entityManager.getBall();
+      if (ball) ball.sprite = this._sprite;
     } catch (err) {
       this._showError(
         'Failed to load ghosty.png. Please refresh to try again. ' +
@@ -107,10 +83,8 @@ export class GameEngine {
       return;
     }
 
-    // Load audio (non-critical; never throws, game continues without sound).
     await this.audioSystem.load();
 
-    // Wire input and resize handling.
     this.inputHandler.attach((inputType) => this.handleInput(inputType));
     if (typeof window !== 'undefined' && window.addEventListener) {
       window.addEventListener('resize', this._handleResize);
@@ -121,12 +95,6 @@ export class GameEngine {
 
   // ── Loop control ─────────────────────────────────────────────────────────
 
-  /**
-   * Begin the game loop using requestAnimationFrame.
-   * No-op if initialization failed or the loop is already running.
-   *
-   * Requirements: 10.1
-   */
   start() {
     if (!this.canStart || this._running) return;
     this._running = true;
@@ -135,9 +103,6 @@ export class GameEngine {
     }
   }
 
-  /**
-   * Stop the game loop.
-   */
   stop() {
     this._running = false;
     if (this._rafId != null && typeof cancelAnimationFrame === 'function') {
@@ -146,11 +111,7 @@ export class GameEngine {
     this._rafId = null;
   }
 
-  /**
-   * Internal rAF callback. Uses a fixed timestep of one frame per tick to keep
-   * spawn timing and physics deterministic (per the fixed-timestep design).
-   * @private
-   */
+  /** @private */
   _frame() {
     if (!this._running) return;
     this.update(1);
@@ -163,93 +124,71 @@ export class GameEngine {
   // ── Simulation ─────────────────────────────────────────────────────────────
 
   /**
-   * Advance the simulation by one (or more) frames.
-   * Only mutates state while PLAYING.
-   *
-   * Requirements: 1.4, 1.6, 2.1, 2.2, 3.6, 4.1, 4.2, 4.3
-   *
-   * @param {number} [deltaTime=1] - Time step in frames.
+   * Advance the simulation by one (or more) frames. Only mutates while PLAYING.
+   * @param {number} [deltaTime=1]
    */
   update(deltaTime = 1) {
     if (!this.stateManager.isPlaying()) return;
 
-    const ghosty = this.entityManager.getGhosty();
-    if (!ghosty) return;
+    const ball = this.entityManager.getBall();
+    if (!ball) return;
 
-    // Physics: gravity -> clamp -> position -> rotation.
-    this.physicsEngine.applyGravity(ghosty, deltaTime);
-    this.physicsEngine.clampVelocity(ghosty);
-    this.physicsEngine.updatePosition(ghosty, deltaTime);
-    // Touching the top should not end the game: keep Ghosty pinned to
-    // the allowed top padding distance.
-    if (ghosty.y < -CONFIG.topBoundaryPadding) {
-      ghosty.y = -CONFIG.topBoundaryPadding;
-      if (ghosty.velocityY < 0) ghosty.velocityY = 0;
-    }
-    if (this._invincibleFrames > 0) {
-      this._invincibleFrames = Math.max(0, this._invincibleFrames - deltaTime);
-    }
-    ghosty.updateRotation();
+    // 1. Player moves the active pipe.
+    this.entityManager.moveActivePipe(this.inputHandler.getMoveDirection(), deltaTime);
 
-    // Pipes: advance frame counter + move/remove pipes, then spawn if due.
+    // 2. Ball physics: gravity, clamp, integrate.
+    this.physicsEngine.applyGravity(ball, deltaTime);
+    this.physicsEngine.clampSpeed(ball);
+    this.physicsEngine.updatePosition(ball, deltaTime);
+
+    // 3. Walls keep the ball in view (bottom is handled separately, below).
+    this.collisionDetector.checkWalls(ball, this.canvas.width);
+
+    // 4. Pipe bounce + swap.
+    const pipe = this.entityManager.getActivePipe();
+    if (pipe) {
+      const result = this.collisionDetector.circleVsSegment(ball, pipe);
+      if (result.hit) {
+        // Push the ball out of penetration along the surface normal.
+        ball.x += result.normal.x * result.penetration;
+        ball.y += result.normal.y * result.penetration;
+        this.physicsEngine.reflect(ball, result.normal);
+        this.entityManager.swapPipe();
+        this.audioSystem.playJump();
+      }
+    }
+
+    // 5. Survival time = score.
     this.entityManager.update(deltaTime);
-    if (this.entityManager.shouldSpawnPipe()) {
-      this.entityManager.spawnPipe();
-    }
 
-    // Scoring.
-    this.entityManager.checkAndUpdateScore(ghosty);
-    const gotCake = this.entityManager.checkCakeCollection(ghosty);
-    if (gotCake) this.audioSystem.playYummy();
-
-    // Collisions are ignored during revive invincibility.
-    if (this._invincibleFrames <= 0) {
-      let collided = this.collisionDetector.checkGhostyBoundaryCollision(ghosty);
-      if (!collided) {
-        for (const pipe of this.entityManager.getPipes()) {
-          if (this.collisionDetector.checkGhostyPipeCollision(ghosty, pipe)) {
-            collided = true;
-            break;
-          }
-        }
-      }
-      if (collided) {
-        if (this.entityManager.consumeExtraLife()) {
-          // Revive in-place: keep score/pipes/state, stabilize Ghosty, grant i-frames.
-          ghosty.velocityY = 0;
-          const maxY = this.canvas.height - ghosty.height;
-          ghosty.y = Math.max(-CONFIG.topBoundaryPadding, Math.min(ghosty.y, maxY));
-          this._invincibleFrames = CONFIG.reviveInvincibleSeconds * 60;
-        } else {
-          this.stateManager.transitionTo(GameState.GAME_OVER);
-          this.stateManager.updateHighScore(this.entityManager.getScore());
-          this.audioSystem.playGameOver();
-        }
-      }
+    // 6. Bottom-out = game over.
+    if (this.collisionDetector.isBelowBottom(ball, this.canvas.height)) {
+      this.stateManager.transitionTo(GameState.GAME_OVER);
+      this.stateManager.updateHighScore(this.entityManager.getScore());
+      this.audioSystem.playGameOver();
     }
   }
 
   // ── Rendering ────────────────────────────────────────────────────────────
 
-  /**
-   * Draw the current frame: background -> pipes -> ghosty -> score -> UI text.
-   *
-   * Requirements: 4.4, 4.5, 5.2, 5.5, 7.9, 7.10
-   */
   render() {
     this.renderer.renderBackground();
-    this.renderer.renderPipes(this.entityManager.getPipes());
-    this.renderer.renderCakes(this.entityManager.getPipes());
 
-    const ghosty = this.entityManager.getGhosty();
-    if (ghosty) this.renderer.renderGhosty(ghosty);
+    const pipe = this.entityManager.getActivePipe();
+    if (pipe) this.renderer.renderPipe(pipe);
+    this.renderer.renderQueue(this.entityManager.getQueue());
+
+    const ball = this.entityManager.getBall();
+    if (ball) this.renderer.renderGhosty(ball);
 
     const state = this.stateManager.getCurrentState();
     if (state === GameState.MENU) {
       this.renderer.drawMenu();
     } else if (state === GameState.PLAYING) {
-      this.renderer.renderScore(this.entityManager.getScore());
-      this.renderer.renderLifeGauge(this.entityManager.getLifeGauge());
+      this.renderer.renderScore(
+        this.entityManager.getScore(),
+        this.stateManager.getHighScore()
+      );
     } else if (state === GameState.GAME_OVER) {
       this.renderer.drawGameOver(
         this.entityManager.getScore(),
@@ -261,32 +200,21 @@ export class GameEngine {
   // ── Input ──────────────────────────────────────────────────────────────────
 
   /**
-   * Handle a normalized flap input depending on the current state.
+   * Handle a discrete action input depending on the current state.
    * - MENU: start the game.
-   * - PLAYING: flap Ghosty and play the jump sound.
    * - GAME_OVER: reset and start a new game.
-   *
-   * Requirements: 1.1, 1.2, 1.3, 1.5, 5.3, 5.6, 5.7, 5.8, 5.9, 5.10, 6.1
-   *
-   * @param {string} [inputType] - The InputType that triggered this (unused).
+   * @param {string} [inputType]
    */
   // eslint-disable-next-line no-unused-vars
   handleInput(inputType) {
     const state = this.stateManager.getCurrentState();
 
     if (state === GameState.MENU) {
+      // Fresh entities so the game starts cleanly from the top.
+      this.entityManager.reset();
+      const ball = this.entityManager.getBall();
+      if (ball && this._sprite) ball.sprite = this._sprite;
       this.stateManager.transitionTo(GameState.PLAYING);
-      // Spawn first obstacle immediately when gameplay starts.
-      if (this.entityManager.getPipes().length === 0) {
-        this.entityManager.spawnInitialPipe();
-      }
-    } else if (state === GameState.PLAYING) {
-      const ghosty = this.entityManager.getGhosty();
-      if (ghosty) {
-        this.physicsEngine.applyFlap(ghosty);
-        ghosty.updateRotation();
-      }
-      this.audioSystem.playJump();
     } else if (state === GameState.GAME_OVER) {
       this.reset();
     }
@@ -295,65 +223,46 @@ export class GameEngine {
   // ── Reset ────────────────────────────────────────────────────────────────
 
   /**
-   * Reset the game to a fresh PLAYING session: clear pipes, reset score,
-   * re-create Ghosty (re-applying the cached sprite), and enter PLAYING.
-   *
-   * Requirements: 5.6, 5.7, 5.8, 5.9
+   * Reset to a fresh PLAYING session.
    */
   reset() {
     this.entityManager.reset();
 
-    const ghosty = this.entityManager.getGhosty();
-    if (ghosty && this._sprite) ghosty.sprite = this._sprite;
+    const ball = this.entityManager.getBall();
+    if (ball && this._sprite) ball.sprite = this._sprite;
 
     if (!this.stateManager.isPlaying()) {
       this.stateManager.transitionTo(GameState.PLAYING);
-    }
-    this._invincibleFrames = 0;
-    // After restart, show the first pipe immediately on the right side.
-    if (this.entityManager.getPipes().length === 0) {
-      this.entityManager.spawnInitialPipe();
     }
   }
 
   // ── Queries ──────────────────────────────────────────────────────────────
 
-  /** @returns {string} The current game state. */
+  /** @returns {string} */
   getState() {
     return this.stateManager.getCurrentState();
   }
 
-  /** @returns {number} The current score. */
+  /** @returns {number} */
   getScore() {
     return this.entityManager.getScore();
   }
 
-  /** @returns {string|null} The last error message displayed, if any. */
+  /** @returns {string|null} */
   getErrorMessage() {
     return this._errorMessage;
   }
 
-  // ── Responsive resize (Tasks 15.1, 15.2) ───────────────────────────────────
+  // ── Responsive resize ───────────────────────────────────────────────────────
 
-  /**
-   * Window resize handler. Recomputes canvas dimensions while preserving all
-   * game state (score, positions, velocities, mode).
-   *
-   * Requirements: 9.1, 9.2, 9.3, 9.5
-   * @private
-   */
+  /** @private */
   _handleResize() {
     const vw = this._viewportWidth();
     const vh = this._viewportHeight();
-
     this._applyCanvasSize(vw, vh);
   }
 
-  /**
-   * Resize the canvas buffer and propagate the new scale factor to subsystems.
-   * Does not modify any gameplay state.
-   * @private
-   */
+  /** @private */
   _applyCanvasSize(viewportWidth, viewportHeight) {
     this.scaleFactor = resizeCanvas(this.canvas, viewportWidth, viewportHeight);
     this.renderer.setScaleFactor(this.scaleFactor);
@@ -365,10 +274,9 @@ export class GameEngine {
 
   /**
    * Load an image with a timeout guard.
-   *
-   * @param {string} path    - Image path.
-   * @param {number} timeout - Timeout in milliseconds.
-   * @returns {Promise<HTMLImageElement>} Resolves with the loaded image, rejects on failure/timeout.
+   * @param {string} path
+   * @param {number} timeout
+   * @returns {Promise<HTMLImageElement>}
    * @private
    */
   _loadImage(path, timeout) {
@@ -402,11 +310,7 @@ export class GameEngine {
 
   // ── Error display ──────────────────────────────────────────────────────────
 
-  /**
-   * Display an error message to the player via the #errorMessage element.
-   * @param {string} message
-   * @private
-   */
+  /** @param {string} message @private */
   _showError(message) {
     this._errorMessage = message;
     if (typeof document !== 'undefined' && document.getElementById) {
@@ -418,10 +322,7 @@ export class GameEngine {
     }
   }
 
-  /**
-   * Hide any currently displayed error message.
-   * @private
-   */
+  /** @private */
   _hideError() {
     this._errorMessage = null;
     if (typeof document !== 'undefined' && document.getElementById) {
@@ -435,14 +336,14 @@ export class GameEngine {
 
   // ── Viewport helpers ───────────────────────────────────────────────────────
 
-  /** @returns {number} Current viewport width. @private */
+  /** @returns {number} @private */
   _viewportWidth() {
     return typeof window !== 'undefined' && window.innerWidth
       ? window.innerWidth
       : this.canvas.width;
   }
 
-  /** @returns {number} Current viewport height. @private */
+  /** @returns {number} @private */
   _viewportHeight() {
     return typeof window !== 'undefined' && window.innerHeight
       ? window.innerHeight

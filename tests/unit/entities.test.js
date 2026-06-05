@@ -1,20 +1,14 @@
 /**
- * entities.test.js — Property-based tests for pipe entities and Ghosty.
- * Properties 4, 5, 6, 7, 8 from design document.
- * Implemented in tasks 2.3, 2.5, 6.2–6.6.
+ * entities.test.js — Tests for the ball (Ghosty), the angled Pipe, and the
+ * EntityManager's active-pipe + supply-queue behavior.
  */
 
 import fc from 'fast-check';
+import { Ghosty } from '../../src/entities/Ghosty.js';
 import { Pipe } from '../../src/entities/Pipe.js';
 import { EntityManager } from '../../src/systems/EntityManager.js';
 import CONFIG from '../../src/config.js';
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/**
- * Creates a minimal mock canvas accepted by EntityManager.
- * Width/height default to 900×600 (design resolution).
- */
 function makeCanvas(width = 900, height = 600) {
   const canvas = document.createElement('canvas');
   canvas.width = width;
@@ -22,290 +16,82 @@ function makeCanvas(width = 900, height = 600) {
   return canvas;
 }
 
-// ── Property 4: Pipe Movement ─────────────────────────────────────────────────
+// ── Ball (Ghosty) ────────────────────────────────────────────────────────────
 
-/**
- * Property 4: Pipe Movement
- * Validates: Requirements 2.2
- *
- * For any initial pipe x-coordinate, moving the pipe at 2 pixels per frame for
- * N frames SHALL result in the pipe's x-coordinate decreasing by exactly 2 * N pixels.
- */
-describe('Pipe — Property 4: Pipe Movement', () => {
-  it('pipe x decreases by pipeSpeed * N after N update() calls', () => {
-    fc.assert(
-      fc.property(
-        // initialX: starting position anywhere from 0 to 800px
-        fc.integer({ min: 0, max: 800 }),
-        // N: number of frames (1–200)
-        fc.integer({ min: 1, max: 200 }),
-        (initialX, n) => {
-          const canvasHeight = 711;
-          const pipe = new Pipe(
-            initialX,
-            /* width */ 60,
-            /* canvasHeight */ canvasHeight,
-            /* gapY */ 355,
-            /* gapHeight */ 150
-          );
-
-          // Advance the pipe N frames (one frame at a time)
-          for (let i = 0; i < n; i++) {
-            pipe.update(1);
-          }
-
-          const expectedX = initialX - CONFIG.pipeSpeed * n;
-          return Math.abs(pipe.x - expectedX) < 0.0001;
-        }
-      ),
-      { numRuns: 100 }
-    );
+describe('Ghosty (ball) — geometry helpers', () => {
+  it('getCenter returns the bounding-box center', () => {
+    const ball = new Ghosty(100, 200, 20);
+    expect(ball.getCenter()).toEqual({ x: 120, y: 220 });
   });
 
-  it('pipe x decreases by pipeSpeed * deltaTime for a single update with fractional deltaTime', () => {
-    fc.assert(
-      fc.property(
-        fc.integer({ min: 0, max: 800 }),
-        // deltaTime: a positive real multiplier (0.5 – 5)
-        fc.float({ min: 0.5, max: 5, noNaN: true }),
-        (initialX, deltaTime) => {
-          const pipe = new Pipe(initialX, 60, 711, 355, 150);
-          pipe.update(deltaTime);
-          const expectedX = initialX - CONFIG.pipeSpeed * deltaTime;
-          return Math.abs(pipe.x - expectedX) < 0.001;
-        }
-      ),
-      { numRuns: 100 }
-    );
-  });
-
-  it('pipe movement is deterministic: same N always produces same final x', () => {
-    fc.assert(
-      fc.property(
-        fc.integer({ min: 0, max: 800 }),
-        fc.integer({ min: 1, max: 100 }),
-        (initialX, n) => {
-          // Run twice from identical initial state
-          const pipe1 = new Pipe(initialX, 60, 711, 355, 150);
-          const pipe2 = new Pipe(initialX, 60, 711, 355, 150);
-
-          for (let i = 0; i < n; i++) {
-            pipe1.update(1);
-            pipe2.update(1);
-          }
-
-          return pipe1.x === pipe2.x;
-        }
-      ),
-      { numRuns: 100 }
-    );
+  it('setCenter positions the bounding box so the center matches', () => {
+    const ball = new Ghosty(0, 0, 20);
+    ball.setCenter(300, 400);
+    expect(ball.getCenter().x).toBeCloseTo(300, 5);
+    expect(ball.getCenter().y).toBeCloseTo(400, 5);
   });
 });
 
-// ── Property 5: Pipe Removal ──────────────────────────────────────────────────
-
-/**
- * Property 5: Pipe Removal
- * Validates: Requirements 2.3
- *
- * For any pipe with x + width < 0, updatePipes() SHALL remove it.
- * Pipes still on screen (x + width >= 0) SHALL never be removed.
- */
-describe('EntityManager — Property 5: Pipe Removal', () => {
-  it('pipes with x + width < 0 are removed after updatePipes()', () => {
-    fc.assert(
-      fc.property(
-        // Offscreen x: must satisfy x + 60 < 0, so x < -60
-        fc.integer({ min: -300, max: -61 }),
-        (offscreenX) => {
-          const canvas = makeCanvas();
-          const em = new EntityManager(canvas, 1);
-
-          // Manually inject an off-screen pipe
-          const pipe = new Pipe(offscreenX, 60, canvas.height, 355, 150);
-          em._pipes.push(pipe);
-
-          // updatePipes with deltaTime=0 so positions don't change
-          em.updatePipes(0);
-
-          return em.getPipes().length === 0;
-        }
-      ),
-      { numRuns: 100 }
-    );
+describe('Ghosty (ball) — update applies gravity and integrates both axes', () => {
+  it('moves by velocity each frame and accelerates downward', () => {
+    const ball = new Ghosty(100, 100, 20);
+    ball.velocityX = 2;
+    ball.velocityY = 0;
+    ball.update(1);
+    expect(ball.velocityY).toBeCloseTo(CONFIG.gravity, 5);
+    expect(ball.x).toBeCloseTo(102, 5);
+    expect(ball.y).toBeCloseTo(100 + CONFIG.gravity, 5);
   });
 
-  it('pipes still on screen (x + width >= 0) are never removed', () => {
-    fc.assert(
-      fc.property(
-        // On-screen x: must satisfy x + 60 >= 0, so x >= -59
-        fc.integer({ min: -59, max: 800 }),
-        (onscreenX) => {
-          const canvas = makeCanvas();
-          const em = new EntityManager(canvas, 1);
-
-          const pipe = new Pipe(onscreenX, 60, canvas.height, 355, 150);
-          em._pipes.push(pipe);
-
-          em.updatePipes(0);
-
-          return em.getPipes().length === 1;
-        }
-      ),
-      { numRuns: 100 }
-    );
-  });
-
-  it('only off-screen pipes are removed when mixed with on-screen pipes', () => {
-    fc.assert(
-      fc.property(
-        // Number of on-screen pipes (1–5)
-        fc.integer({ min: 1, max: 5 }),
-        // Number of off-screen pipes (1–5)
-        fc.integer({ min: 1, max: 5 }),
-        (onCount, offCount) => {
-          const canvas = makeCanvas();
-          const em = new EntityManager(canvas, 1);
-
-          for (let i = 0; i < onCount; i++) {
-            em._pipes.push(new Pipe(100, 60, canvas.height, 355, 150));
-          }
-          for (let i = 0; i < offCount; i++) {
-            em._pipes.push(new Pipe(-100, 60, canvas.height, 355, 150));
-          }
-
-          em.updatePipes(0);
-
-          return em.getPipes().length === onCount;
-        }
-      ),
-      { numRuns: 100 }
-    );
+  it('clamps speed to maxSpeed', () => {
+    const ball = new Ghosty(0, 0, 20);
+    ball.velocityX = 100;
+    ball.velocityY = 0;
+    ball.clampSpeed();
+    expect(Math.hypot(ball.velocityX, ball.velocityY)).toBeCloseTo(CONFIG.maxSpeed, 5);
   });
 });
 
-// ── Property 6: Pipe Spawn Timing ─────────────────────────────────────────────
+// ── Pipe (angled paddle) ─────────────────────────────────────────────────────
 
-/**
- * Property 6: Pipe Spawn Timing
- * Validates: Requirements 2.1
- *
- * shouldSpawnPipe() returns true if and only if frameCount > 0 AND
- * frameCount % pipeSpawnInterval === 0.
- */
-describe('EntityManager — Property 6: Pipe Spawn Timing', () => {
-  it('shouldSpawnPipe() returns true at every multiple of pipeSpawnInterval (> 0)', () => {
-    fc.assert(
-      fc.property(
-        // k: positive multiplier (1–50) → frameCount = k * 90
-        fc.integer({ min: 1, max: 50 }),
-        (k) => {
-          const canvas = makeCanvas();
-          const em = new EntityManager(canvas, 1);
-          em.frameCount = k * CONFIG.pipeSpawnInterval;
-          return em.shouldSpawnPipe() === true;
-        }
-      ),
-      { numRuns: 100 }
-    );
+describe('Pipe — segment and normal', () => {
+  it('getSegment returns horizontal endpoints for a flat pipe', () => {
+    const pipe = new Pipe(100, 200, 0, 160, 18);
+    const seg = pipe.getSegment();
+    expect(seg.ax).toBeCloseTo(20, 5);
+    expect(seg.bx).toBeCloseTo(180, 5);
+    expect(seg.ay).toBeCloseTo(200, 5);
+    expect(seg.by).toBeCloseTo(200, 5);
   });
 
-  it('shouldSpawnPipe() returns false at frame 0', () => {
-    const canvas = makeCanvas();
-    const em = new EntityManager(canvas, 1);
-    em.frameCount = 0;
-    expect(em.shouldSpawnPipe()).toBe(false);
+  it('getNormal points straight up for a flat pipe', () => {
+    const pipe = new Pipe(100, 200, 0, 160, 18);
+    const n = pipe.getNormal();
+    expect(n.x).toBeCloseTo(0, 5);
+    expect(n.y).toBeCloseTo(-1, 5);
   });
 
-  it('shouldSpawnPipe() returns false for all non-interval frames > 0', () => {
+  it('normal always has a non-positive y component (upward-facing)', () => {
     fc.assert(
-      fc.property(
-        // frame: 1–4500, not a multiple of pipeSpawnInterval
-        fc.integer({ min: 1, max: 4500 }).filter(f => f % CONFIG.pipeSpawnInterval !== 0),
-        (frame) => {
-          const canvas = makeCanvas();
-          const em = new EntityManager(canvas, 1);
-          em.frameCount = frame;
-          return em.shouldSpawnPipe() === false;
-        }
-      ),
-      { numRuns: 100 }
-    );
-  });
-
-  it('update() increments frameCount and triggers spawning at correct intervals', () => {
-    fc.assert(
-      fc.property(
-        fc.integer({ min: 1, max: 20 }),
-        (k) => {
-          const canvas = makeCanvas();
-          const em = new EntityManager(canvas, 1);
-
-          // Advance to one frame before the k-th spawn interval
-          em.frameCount = k * CONFIG.pipeSpawnInterval - 1;
-          expect(em.shouldSpawnPipe()).toBe(false);
-
-          em.update(1); // now frameCount === k * pipeSpawnInterval
-          return em.shouldSpawnPipe() === true;
-        }
-      ),
+      fc.property(fc.constantFrom(...CONFIG.pipeAngles), (angle) => {
+        const pipe = new Pipe(100, 200, angle, 160, 18);
+        return pipe.getNormal().y <= 0.0001;
+      }),
       { numRuns: 50 }
     );
   });
-});
 
-// ── Property 7: Gap Position Bounds ───────────────────────────────────────────
-
-/**
- * Property 7: Gap Position Bounds
- * Validates: Requirements 2.4
- *
- * Every spawned pipe's gapY SHALL be within [minGapY, canvasHeight - maxGapYOffset]
- * (both values scaled by scaleFactor).
- */
-describe('EntityManager — Property 7: Gap Position Bounds', () => {
-  it('spawned pipe gapY is within [minGapY * scale, canvasHeight - maxGapYOffset * scale]', () => {
+  it('segment endpoints are symmetric about the center', () => {
     fc.assert(
       fc.property(
-        // canvasWidth: 200–1200 px, height is set so 900:600 ratio holds
-        fc.integer({ min: 200, max: 1200 }),
-        (canvasWidth) => {
-          const canvasHeight = Math.round(canvasWidth * (600 / 900));
-          const canvas = makeCanvas(canvasWidth, canvasHeight);
-          const scaleFactor = canvasWidth / CONFIG.baseCanvasWidth;
-          const em = new EntityManager(canvas, scaleFactor);
-
-          const minGapY = CONFIG.minGapY * scaleFactor;
-          const maxGapY = canvasHeight - CONFIG.maxGapYOffset * scaleFactor;
-
-          // Skip degenerate canvases where bounds are inverted
-          if (minGapY >= maxGapY) return true;
-
-          const pipe = em.spawnPipe();
-          return pipe.gapY >= minGapY && pipe.gapY <= maxGapY;
-        }
-      ),
-      { numRuns: 200 }
-    );
-  });
-
-  it('gap bounds are respected across many random spawns at base scale', () => {
-    fc.assert(
-      fc.property(
-        fc.integer({ min: 1, max: 50 }),
-        (spawnCount) => {
-          const canvas = makeCanvas(900, 600);
-          const em = new EntityManager(canvas, 1);
-
-          const minGapY = CONFIG.minGapY;
-          const maxGapY = canvas.height - CONFIG.maxGapYOffset;
-
-          const pipes = [];
-          for (let i = 0; i < spawnCount; i++) {
-            pipes.push(em.spawnPipe());
-          }
-
-          return pipes.every(p => p.gapY >= minGapY && p.gapY <= maxGapY);
+        fc.constantFrom(...CONFIG.pipeAngles),
+        fc.integer({ min: 100, max: 800 }),
+        (angle, cx) => {
+          const pipe = new Pipe(cx, 200, angle, 160, 18);
+          const seg = pipe.getSegment();
+          const midX = (seg.ax + seg.bx) / 2;
+          const midY = (seg.ay + seg.by) / 2;
+          return Math.abs(midX - cx) < 0.001 && Math.abs(midY - 200) < 0.001;
         }
       ),
       { numRuns: 100 }
@@ -313,217 +99,92 @@ describe('EntityManager — Property 7: Gap Position Bounds', () => {
   });
 });
 
-// ── Property 15: Reset Removes All Pipes ──────────────────────────────────────
-
-/**
- * Property 15: Reset Removes All Pipes
- * Validates: Requirements 5.8
- *
- * For any game state containing N pipes, triggering reset() SHALL result in
- * getPipes() returning an empty array and frameCount resetting to 0.
- */
-describe('EntityManager — Property 15: Reset Removes All Pipes', () => {
-  it('getPipes() returns empty array after reset() regardless of how many pipes existed', () => {
-    fc.assert(
-      fc.property(
-        // pipeCount: 0–20 pipes before reset
-        fc.integer({ min: 0, max: 20 }),
-        (pipeCount) => {
-          const canvas = makeCanvas();
-          const em = new EntityManager(canvas, 1);
-
-          // Spawn N pipes
-          for (let i = 0; i < pipeCount; i++) {
-            em.spawnPipe();
-          }
-
-          expect(em.getPipes().length).toBe(pipeCount);
-
-          em.reset();
-
-          return em.getPipes().length === 0;
-        }
-      ),
-      { numRuns: 100 }
-    );
+describe('Pipe — moveBy clamps the bar inside the canvas', () => {
+  it('clamps to the right edge', () => {
+    const canvasWidth = 900;
+    const pipe = new Pipe(450, 560, 0, 160, 18);
+    pipe.moveBy(10000, canvasWidth);
+    // Flat pipe half-extent = length/2 = 80.
+    expect(pipe.centerX).toBeCloseTo(canvasWidth - 80, 5);
   });
 
-  it('frameCount resets to 0 after reset()', () => {
-    fc.assert(
-      fc.property(
-        fc.integer({ min: 1, max: 10000 }),
-        (frames) => {
-          const canvas = makeCanvas();
-          const em = new EntityManager(canvas, 1);
-          em.frameCount = frames;
-
-          em.reset();
-
-          return em.frameCount === 0;
-        }
-      ),
-      { numRuns: 100 }
-    );
+  it('clamps to the left edge', () => {
+    const pipe = new Pipe(450, 560, 0, 160, 18);
+    pipe.moveBy(-10000, 900);
+    expect(pipe.centerX).toBeCloseTo(80, 5);
   });
 
-  it('reset() is idempotent: calling it multiple times always yields empty pipes and zero frameCount', () => {
-    fc.assert(
-      fc.property(
-        fc.integer({ min: 1, max: 10 }),
-        fc.integer({ min: 1, max: 5 }),
-        (pipeCount, resetCount) => {
-          const canvas = makeCanvas();
-          const em = new EntityManager(canvas, 1);
-
-          for (let i = 0; i < pipeCount; i++) {
-            em.spawnPipe();
-          }
-
-          for (let r = 0; r < resetCount; r++) {
-            em.reset();
-          }
-
-          return em.getPipes().length === 0 && em.frameCount === 0;
-        }
-      ),
-      { numRuns: 100 }
-    );
+  it('moves normally when within bounds', () => {
+    const pipe = new Pipe(450, 560, 0, 160, 18);
+    pipe.moveBy(30, 900);
+    expect(pipe.centerX).toBeCloseTo(480, 5);
   });
 });
 
+// ── EntityManager — active pipe + supply queue ───────────────────────────────
 
-/**
- * Property 8: Gap Height Invariant
- * Validates: Requirements 2.5
- *
- * For any pipe with a defined gap center Y-coordinate, the distance between
- * the bottom edge of the top pipe segment (gapY - gapHeight/2) and the top
- * edge of the bottom pipe segment (gapY + gapHeight/2) SHALL equal exactly
- * gapHeight pixels.
- */
-describe('Pipe — Property 8: Gap Height Invariant', () => {
-  it('top segment bottom edge + gap = bottom segment top edge, and gap equals gapHeight', () => {
-    fc.assert(
-      fc.property(
-        // canvasHeight: a realistic canvas height (400–1200px)
-        fc.integer({ min: 400, max: 1200 }),
-        // gapHeight: a realistic gap (50–300px)
-        fc.integer({ min: 50, max: 300 }),
-        // gapY must be within [gapHeight/2, canvasHeight - gapHeight/2]
-        // so both segments have positive heights
-        fc.integer({ min: 50, max: 1150 }),
-        (canvasHeight, gapHeight, rawGapY) => {
-          const halfGap = gapHeight / 2;
-          // Clamp gapY so that both segments exist with positive height
-          const minGapY = halfGap;
-          const maxGapY = canvasHeight - halfGap;
-          if (minGapY >= maxGapY) return true; // skip degenerate cases
-          const gapY = minGapY + (rawGapY % (maxGapY - minGapY));
-
-          const pipe = new Pipe(
-            /* x */ 100,
-            /* width */ 60,
-            /* height (canvasHeight) */ canvasHeight,
-            gapY,
-            gapHeight
-          );
-
-          const top = pipe.getTopSegment();
-          const bottom = pipe.getBottomSegment();
-
-          // The bottom edge of the top segment
-          const topSegmentBottomEdge = top.y + top.height;
-          // The top edge of the bottom segment
-          const bottomSegmentTopEdge = bottom.y;
-
-          // The gap between the two segments must equal gapHeight
-          const actualGap = bottomSegmentTopEdge - topSegmentBottomEdge;
-
-          return Math.abs(actualGap - gapHeight) < 0.0001;
-        }
-      ),
-      { numRuns: 100 }
-    );
+describe('EntityManager — pipes and queue', () => {
+  it('initPipes creates an active pipe and a full queue', () => {
+    const em = new EntityManager(makeCanvas(), 1);
+    em.initPipes();
+    expect(em.getActivePipe()).not.toBeNull();
+    expect(em.getQueue().length).toBe(CONFIG.queueSize);
   });
 
-  it('top and bottom segments do not overlap', () => {
-    fc.assert(
-      fc.property(
-        fc.integer({ min: 400, max: 1200 }),
-        fc.integer({ min: 50, max: 300 }),
-        fc.integer({ min: 50, max: 1150 }),
-        (canvasHeight, gapHeight, rawGapY) => {
-          const halfGap = gapHeight / 2;
-          const minGapY = halfGap;
-          const maxGapY = canvasHeight - halfGap;
-          if (minGapY >= maxGapY) return true;
-          const gapY = minGapY + (rawGapY % (maxGapY - minGapY));
-
-          const pipe = new Pipe(100, 60, canvasHeight, gapY, gapHeight);
-          const top = pipe.getTopSegment();
-          const bottom = pipe.getBottomSegment();
-
-          // Top segment must end before bottom segment begins
-          const topBottom = top.y + top.height;
-          const bottomTop = bottom.y;
-          return topBottom <= bottomTop;
-        }
-      ),
-      { numRuns: 100 }
-    );
+  it('swapPipe promotes the front of the queue and keeps the queue size', () => {
+    const em = new EntityManager(makeCanvas(), 1);
+    em.initPipes();
+    const nextAngle = em.getQueue()[0].angle;
+    em.swapPipe();
+    expect(em.getActivePipe().angle).toBe(nextAngle);
+    expect(em.getQueue().length).toBe(CONFIG.queueSize);
   });
 
-  it('top segment height + gap + bottom segment height = canvas height', () => {
-    fc.assert(
-      fc.property(
-        fc.integer({ min: 400, max: 1200 }),
-        fc.integer({ min: 50, max: 300 }),
-        fc.integer({ min: 50, max: 1150 }),
-        (canvasHeight, gapHeight, rawGapY) => {
-          const halfGap = gapHeight / 2;
-          const minGapY = halfGap;
-          const maxGapY = canvasHeight - halfGap;
-          if (minGapY >= maxGapY) return true;
-          const gapY = minGapY + (rawGapY % (maxGapY - minGapY));
-
-          const pipe = new Pipe(100, 60, canvasHeight, gapY, gapHeight);
-          const top = pipe.getTopSegment();
-          const bottom = pipe.getBottomSegment();
-
-          const total = top.height + gapHeight + bottom.height;
-          return Math.abs(total - canvasHeight) < 0.0001;
-        }
-      ),
-      { numRuns: 100 }
-    );
+  it('swapPipe preserves the active pipe horizontal position', () => {
+    const em = new EntityManager(makeCanvas(), 1);
+    em.initPipes();
+    em.getActivePipe().centerX = 321;
+    em.swapPipe();
+    expect(em.getActivePipe().centerX).toBeCloseTo(321, 0);
   });
 
-  it('gap is correctly positioned at gapY center', () => {
-    fc.assert(
-      fc.property(
-        fc.integer({ min: 400, max: 1200 }),
-        fc.integer({ min: 50, max: 300 }),
-        fc.integer({ min: 50, max: 1150 }),
-        (canvasHeight, gapHeight, rawGapY) => {
-          const halfGap = gapHeight / 2;
-          const minGapY = halfGap;
-          const maxGapY = canvasHeight - halfGap;
-          if (minGapY >= maxGapY) return true;
-          const gapY = minGapY + (rawGapY % (maxGapY - minGapY));
+  it('moveActivePipe slides the active pipe and respects direction', () => {
+    const em = new EntityManager(makeCanvas(), 1);
+    em.initPipes();
+    const start = em.getActivePipe().centerX;
+    em.moveActivePipe(1, 1);
+    expect(em.getActivePipe().centerX).toBeGreaterThan(start);
+    const afterRight = em.getActivePipe().centerX;
+    em.moveActivePipe(-1, 1);
+    expect(em.getActivePipe().centerX).toBeLessThan(afterRight);
+  });
 
-          const pipe = new Pipe(100, 60, canvasHeight, gapY, gapHeight);
-          const top = pipe.getTopSegment();
-          const bottom = pipe.getBottomSegment();
+  it('moveActivePipe with direction 0 does nothing', () => {
+    const em = new EntityManager(makeCanvas(), 1);
+    em.initPipes();
+    const start = em.getActivePipe().centerX;
+    em.moveActivePipe(0, 1);
+    expect(em.getActivePipe().centerX).toBe(start);
+  });
+});
 
-          // The midpoint of the gap should be gapY
-          const gapStart = top.y + top.height;
-          const gapEnd = bottom.y;
-          const gapMidpoint = (gapStart + gapEnd) / 2;
+describe('EntityManager — survival time and reset', () => {
+  it('update accumulates frames and getElapsedSeconds reflects them', () => {
+    const em = new EntityManager(makeCanvas(), 1);
+    em.reset();
+    for (let i = 0; i < 60; i++) em.update(1);
+    expect(em.getElapsedSeconds()).toBeCloseTo(1, 5);
+    expect(em.getScore()).toBeCloseTo(1, 5);
+  });
 
-          return Math.abs(gapMidpoint - gapY) < 0.0001;
-        }
-      ),
-      { numRuns: 100 }
-    );
+  it('reset zeroes the timer and rebuilds ball + pipes', () => {
+    const em = new EntityManager(makeCanvas(), 1);
+    em.reset();
+    em.update(100);
+    em.reset();
+    expect(em.elapsedFrames).toBe(0);
+    expect(em.getBall()).not.toBeNull();
+    expect(em.getActivePipe()).not.toBeNull();
+    expect(em.getQueue().length).toBe(CONFIG.queueSize);
   });
 });

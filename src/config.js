@@ -1,46 +1,38 @@
 /**
  * config.js — Single source of truth for all game constants.
  * Never hardcode physics values, colors, or asset paths outside this file.
+ *
+ * Game: Ghost Ball Bouncer — a ghost-ball falls under gravity and is reflected
+ * upward off an angled, player-controlled pipe at the bottom. The pipe swaps
+ * from a 5-pipe supply queue on every bounce. Survival time is the score.
  */
 
 const CONFIG = {
   // ── Physics ──────────────────────────────────────────────────────────────
-  // Jump and fall amplitude softened to half the original feel
-  // (original: gravity 0.5, flap -8, terminal ±10).
-  gravity: 0.25,              // px/frame² — downward acceleration applied each frame
-  flapVelocity: -4,           // px/frame  — velocity applied on flap input
-  maxUpwardVelocity: -5,      // px/frame  — terminal upward speed (most negative)
-  maxDownwardVelocity: 5,     // px/frame  — terminal downward speed (most positive)
+  gravity: 0.15,              // px/frame² — downward acceleration applied each frame
+  restitution: 0.98,          // 0..1      — fraction of speed kept after a pipe bounce
+  maxSpeed: 16,               // px/frame  — terminal speed magnitude for the ball
+  ballRadius: 20,             // px        — collision radius of the ghost ball (at 1× scale)
+  minBounceUpSpeed: 10,       // px/frame  — minimum upward speed guaranteed after every bounce
 
-  // ── Gameplay ─────────────────────────────────────────────────────────────
-  pipeSpawnInterval: 140,     // frames    — 140 * 2 px/frame = 280px horizontal spacing
-  pipeSpeed: 2,               // px/frame  — leftward movement speed for all pipes
-  gapHeight: 250,             // px        — vertical gap between top and bottom pipe segments
-  minGapY: 80,                // px        — minimum gap center distance from top (tuned for landscape height)
-  maxGapYOffset: 80,          // px        — minimum gap center distance from bottom
-  cakeScoreBonus: 5,          // points    — bonus score for collecting one cake
-  cakeOffsetFromPipe: 30,     // px        — cake floats 30px away from pipe surface
-  cakeScale: 1.5,             // multiplier— cake size scale factor
-  cakeMinPipeGapCount: 3,     // pipes     — minimum pipes between cake spawns
-  cakeMaxPipeGapCount: 8,     // pipes     — maximum pipes between cake spawns
-  cakesPerLife: 3,            // cakes     — collect 3 cakes to gain one extra life
-  lifeGaugeMaxLives: 5,       // lives     — cap of spare lives shown in top-right gauge
-  reviveInvincibleSeconds: 2, // seconds   — invulnerability after consuming an extra life
-  pipeCollisionInset: 10,     // px        — shrink pipe hitboxes inward so edge grazes are safe
-  topBoundaryPadding: 60,     // px        — allowed distance above top before top-boundary collision
-  gameOverBottomPadding: 60,  // px        — extra distance below screen after full disappearance before game over
+  // ── Pipe (player-controlled angled paddle) ────────────────────────────────
+  pipeLength: 160,            // px        — base length of the angled bar (at 1× scale)
+  activePipeLengthScale: 1.5, // ×         — active pipe is this much longer than queue pipes
+  pipeThickness: 18,          // px        — thickness of the bar (at 1× scale)
+  pipeMoveSpeed: 7,           // px/frame  — horizontal speed when holding left/right
+  pipeCenterYOffset: 90,      // px        — distance of pipe center from the bottom edge
+  pipeAngles: [-40, -25, -12, 0, 12, 25, 40], // degrees — allowed pipe tilt angles
+  queueSize: 5,               // pipes     — number of upcoming pipes shown on the right
+  pipeColors: ['#e53935', '#43A047', '#FDD835', '#1E88E5'], // red/green/yellow/blue
 
   // ── Visual ───────────────────────────────────────────────────────────────
-  baseCanvasWidth: 900,       // px        — baseline width (900×600 design resolution)
-  aspectRatio: 900 / 600,    // width / height — 3:2 landscape
+  baseCanvasWidth: 800,       // px        — baseline width (800×600 design resolution)
+  aspectRatio: 800 / 600,     // width / height — 4:3 landscape
   backgroundColor: '#87CEEB', // sky blue background
-  pipeColor: '#4CAF50',       // green pipe color
 
   // ── Asset Paths ──────────────────────────────────────────────────────────
   ghostySpritePath: 'assets/ghosty.png',
-  cakeSpritePath: 'assets/cake.png',
   jumpSoundPath: 'assets/jump.wav',
-  yummySoundPath: 'assets/yummy.wav',
   gameOverSoundPath: 'assets/game_over.wav',
 
   // ── Timeouts ─────────────────────────────────────────────────────────────

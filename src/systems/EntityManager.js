@@ -1,386 +1,234 @@
 /**
- * EntityManager.js — Creates, manages, and destroys game entities.
- * Implemented in task 6.1.
+ * EntityManager.js — Owns the ball, the active pipe, and the supply queue.
  *
- * Requirements: 1.7, 2.1, 2.2, 2.3, 2.4, 2.7, 5.8
+ * There is exactly one active pipe (player-controlled) plus a queue of upcoming
+ * pipes shown on the right. On every bounce the active pipe is replaced by the
+ * front of the queue, and a fresh random pipe is appended at the bottom.
  */
 
 import CONFIG from '../config.js';
 import { Ghosty } from '../entities/Ghosty.js';
 import { Pipe } from '../entities/Pipe.js';
 
+const FPS = 60;
+
 export class EntityManager {
   /**
    * @param {HTMLCanvasElement} canvas      - The game canvas element
-   * @param {number}            scaleFactor - Current scale factor (canvasWidth / baseCanvasWidth)
+   * @param {number}            scaleFactor - Current scale factor
    */
   constructor(canvas, scaleFactor) {
     /** @type {HTMLCanvasElement} */
     this.canvas = canvas;
-
     /** @type {number} */
     this.scaleFactor = scaleFactor;
 
-    /** @type {Pipe[]} — All active pipe entities */
-    this._pipes = [];
+    /** @type {Ghosty|null} */
+    this._ball = null;
+    /** @type {Pipe|null} */
+    this._activePipe = null;
+    /** @type {Pipe[]} Upcoming pipes; index 0 is next to enter play. */
+    this._queue = [];
 
-    /** @type {Ghosty|null} — The player-controlled Ghosty entity */
-    this._ghosty = null;
-
-    /**
-     * Frame counter used to time pipe spawning.
-     * Incremented once per update() call.
-     * @type {number}
-     */
-    this.frameCount = 0;
-
-    /**
-     * Current score — the number of pipes Ghosty has successfully passed.
-     * @type {number}
-     */
-    this.score = 0;
-
-    /** @type {number} Countdown in spawned pipes until next cake appears. */
-    this._pipesUntilNextCake = this._nextCakePipeGap();
-
-    /** @type {number} Lifetime cakes collected (for life gauge progress). */
-    this.cakesCollected = 0;
-    /** @type {number} Current progress toward next extra life [0..cakesPerLife-1]. */
-    this.cakeGaugeProgress = 0;
-    /** @type {number} Stored spare lives available for revive. */
-    this.extraLives = 0;
+    /** @type {number} Survival time accumulator, in frames. */
+    this.elapsedFrames = 0;
   }
 
-  // ── Ghosty ────────────────────────────────────────────────────────────────
+  // ── Scaled dimensions ──────────────────────────────────────────────────────
+
+  /** @returns {number} */
+  _pipeLength() {
+    return CONFIG.pipeLength * this.scaleFactor;
+  }
+
+  /** @returns {number} */
+  _pipeThickness() {
+    return CONFIG.pipeThickness * this.scaleFactor;
+  }
+
+  /** @returns {number} Vertical center of the active pipe. */
+  _pipeCenterY() {
+    return this.canvas.height - CONFIG.pipeCenterYOffset * this.scaleFactor;
+  }
+
+  /** @returns {number} */
+  _ballRadius() {
+    return CONFIG.ballRadius * this.scaleFactor;
+  }
+
+  /** @returns {number} A random allowed pipe angle in degrees. */
+  _randomAngle() {
+    const angles = CONFIG.pipeAngles;
+    return angles[Math.floor(Math.random() * angles.length)];
+  }
 
   /**
-   * Creates and returns a new Ghosty entity positioned at x=50, y=center.
-   * Velocity is initialized to 0.
-   *
-   * Requirements: 1.7
-   *
+   * Pick a random pipe color that is different from avoidColor.
+   * @param {string|null} avoidColor
+   * @returns {string}
+   */
+  _randomColor(avoidColor) {
+    const colors = CONFIG.pipeColors;
+    const choices = avoidColor ? colors.filter(c => c !== avoidColor) : colors;
+    return choices[Math.floor(Math.random() * choices.length)];
+  }
+
+  /**
+   * Build a pipe at a given center/angle using current scaled dimensions.
+   * @param {number} angle
+   * @param {number} centerX
+   * @param {number} centerY
+   * @param {string|null} [avoidColor=null] - Color to exclude (no consecutive repeat)
+   * @returns {Pipe}
+   */
+  _makePipe(angle, centerX, centerY, avoidColor = null) {
+    const pipe = new Pipe(centerX, centerY, angle, this._pipeLength(), this._pipeThickness());
+    pipe.color = this._randomColor(avoidColor);
+    return pipe;
+  }
+
+  // ── Ball ───────────────────────────────────────────────────────────────────
+
+  /**
+   * Creates the ball at top-center with a small downward velocity.
    * @returns {Ghosty}
    */
-  createGhosty() {
-    const canvasHeight = this.canvas.height;
-    const size = 40 * this.scaleFactor;
-    const x = 50 * this.scaleFactor;
-    const y = canvasHeight / 2 - size / 2;
-
-    this._ghosty = new Ghosty(x, y, size, size);
-    return this._ghosty;
+  createBall() {
+    const r = this._ballRadius();
+    const cx = this.canvas.width / 2;
+    const cy = r + 10 * this.scaleFactor;
+    this._ball = new Ghosty(cx - r, cy - r, r);
+    this._ball.velocityX = 0;
+    this._ball.velocityY = 1.5;
+    return this._ball;
   }
 
-  /**
-   * Returns the current Ghosty instance, or null if not yet created.
-   *
-   * @returns {Ghosty|null}
-   */
+  /** @returns {Ghosty|null} */
+  getBall() {
+    return this._ball;
+  }
+
+  /** Backwards-compatible alias. @returns {Ghosty|null} */
   getGhosty() {
-    return this._ghosty;
+    return this._ball;
   }
 
-  // ── Pipes ─────────────────────────────────────────────────────────────────
+  // ── Pipes ──────────────────────────────────────────────────────────────────
 
   /**
-   * Spawns the first pipe of a round already partially on screen so the player
-   * does not wait for the regular spawn interval before seeing an obstacle.
-   *
-   * @returns {Pipe}
+   * Creates the active pipe (centered) and fills the queue with random pipes.
+   * Colors are chained so no two consecutive pipes share the same color.
+   * The active pipe is activePipeLengthScale × longer than queue pipes.
    */
-  spawnInitialPipe() {
-    const pipe = this.spawnPipe();
-    // Place it immediately visible on the right side: right edge aligns
-    // with the canvas right edge.
-    pipe.x = this.canvas.width - pipe.width;
-    return pipe;
-  }
+  initPipes() {
+    this._activePipe = this._makePipe(
+      this._randomAngle(),
+      this.canvas.width / 2,
+      this._pipeCenterY()
+    );
+    this._activePipe.length = this._pipeLength() * CONFIG.activePipeLengthScale;
 
-  /**
-   * Spawns a new Pipe at the right edge of the canvas with a randomized gap.
-   *
-   * Gap center Y is chosen uniformly in [CONFIG.minGapY, canvasHeight - CONFIG.maxGapYOffset].
-   * Both minGapY and maxGapYOffset are scaled by the current scaleFactor.
-   *
-   * Requirements: 2.1, 2.4
-   *
-   * @returns {Pipe}
-   */
-  spawnPipe() {
-    const canvasWidth = this.canvas.width;
-    const canvasHeight = this.canvas.height;
-
-    const pipeWidth = 60 * this.scaleFactor;
-    const gapHeight = CONFIG.gapHeight * this.scaleFactor;
-    const minGapY = CONFIG.minGapY * this.scaleFactor;
-    const maxGapY = canvasHeight - CONFIG.maxGapYOffset * this.scaleFactor;
-
-    // Randomize gap center within valid bounds
-    const gapY = minGapY + Math.random() * (maxGapY - minGapY);
-
-    // Spawn at the right edge (right outside/at boundary depending on width),
-    // so newly generated pipes appear promptly from the right side.
-    const x = canvasWidth;
-
-    const pipe = new Pipe(x, pipeWidth, canvasHeight, gapY, gapHeight);
-    this._maybeAttachCake(pipe);
-    this._pipes.push(pipe);
-    return pipe;
-  }
-
-  /**
-   * Updates all active pipes by advancing their position by one frame.
-   * Pipes that are fully off the left edge are removed automatically.
-   *
-   * Requirements: 2.2, 2.3
-   *
-   * @param {number} [deltaTime=1] - Time step in frames
-   */
-  updatePipes(deltaTime = 1) {
-    for (const pipe of this._pipes) {
-      pipe.update(deltaTime);
-    }
-    // Remove pipes that have scrolled off screen
-    this._pipes = this._pipes.filter(pipe => !pipe.isOffScreen(this.canvas.width));
-  }
-
-  /**
-   * Explicitly removes a single pipe from the active collection.
-   *
-   * @param {Pipe} pipe - The pipe to remove
-   */
-  removePipe(pipe) {
-    this._pipes = this._pipes.filter(p => p !== pipe);
-  }
-
-  /**
-   * Returns a copy of the current active pipe array.
-   *
-   * @returns {Pipe[]}
-   */
-  getPipes() {
-    return [...this._pipes];
-  }
-
-  /**
-   * Returns an AABB for the cake attached to a pipe, or null when no active cake.
-   *
-   * @param {Pipe} pipe
-   * @returns {{x:number,y:number,width:number,height:number}|null}
-   */
-  getCakeBoundingBox(pipe) {
-    if (!pipe.hasCake || pipe.cakeCollected || pipe.cakeSide == null) return null;
-    const cakeSize = 28 * CONFIG.cakeScale * this.scaleFactor;
-    const x = pipe.x + pipe.width / 2 - cakeSize / 2;
-    const offset = CONFIG.cakeOffsetFromPipe * this.scaleFactor;
-    const gapTop = pipe.gapY - pipe.gapHeight / 2;
-    const gapBottom = pipe.gapY + pipe.gapHeight / 2;
-    const safeTopY = gapTop + offset;
-    const safeBottomY = gapBottom - offset - cakeSize;
-
-    // If the gap cannot host the cake with required clearances, hide the cake.
-    if (safeTopY > safeBottomY) return null;
-
-    if (pipe.cakeSide === 'top') {
-      return {
-        x,
-        y: safeTopY,
-        width: cakeSize,
-        height: cakeSize,
-      };
-    }
-
-    return {
-      x,
-      y: safeBottomY,
-      width: cakeSize,
-      height: cakeSize,
-    };
-  }
-
-  /**
-   * Checks whether Ghosty collects any active cake.
-   * Collected cake gives bonus score once and is hidden immediately.
-   *
-   * @param {Ghosty} ghosty
-   * @returns {boolean} true if at least one cake was collected this frame
-   */
-  checkCakeCollection(ghosty) {
-    const g = ghosty.getBoundingBox();
-    let collected = false;
-
-    for (const pipe of this._pipes) {
-      const cake = this.getCakeBoundingBox(pipe);
-      if (!cake) continue;
-      const overlap =
-        g.x < cake.x + cake.width &&
-        g.x + g.width > cake.x &&
-        g.y < cake.y + cake.height &&
-        g.y + g.height > cake.y;
-      if (overlap) {
-        pipe.cakeCollected = true;
-        pipe.hasCake = false;
-        this.score += CONFIG.cakeScoreBonus;
-        this.cakesCollected += 1;
-        this.cakeGaugeProgress += 1;
-        if (this.cakeGaugeProgress >= CONFIG.cakesPerLife) {
-          this.cakeGaugeProgress = 0;
-          this.extraLives = Math.min(CONFIG.lifeGaugeMaxLives, this.extraLives + 1);
-        }
-        collected = true;
-      }
-    }
-
-    return collected;
-  }
-
-  // ── Score Tracking ────────────────────────────────────────────────────────
-
-  /**
-   * Checks whether Ghosty has passed any unscored pipes and increments the
-   * score accordingly.  A pipe is considered "passed" when Ghosty's left edge
-   * (ghosty.x) has moved past the pipe's right edge (pipe.x + pipe.width) and
-   * the pipe has not yet been marked as scored.
-   *
-   * Requirements: 4.1, 4.2, 4.3
-   *
-   * @param {Ghosty} ghosty - The Ghosty entity to test against
-   */
-  checkAndUpdateScore(ghosty) {
-    for (const pipe of this._pipes) {
-      if (ghosty.x > pipe.x + pipe.width && pipe.scored !== true) {
-        pipe.scored = true;
-        this.score += 1;
-      }
+    this._queue = [];
+    let prevColor = this._activePipe.color;
+    for (let i = 0; i < CONFIG.queueSize; i++) {
+      const pipe = this._makePipe(this._randomAngle(), 0, 0, prevColor);
+      this._queue.push(pipe);
+      prevColor = pipe.color;
     }
   }
 
-  /**
-   * Returns the current score.
-   *
-   * Requirements: 4.4, 4.5
-   *
-   * @returns {number}
-   */
-  getScore() {
-    return this.score;
+  /** @returns {Pipe|null} */
+  getActivePipe() {
+    return this._activePipe;
+  }
+
+  /** @returns {Pipe[]} A copy of the upcoming-pipe queue (index 0 = next). */
+  getQueue() {
+    return [...this._queue];
   }
 
   /**
-   * Returns life-gauge state for HUD rendering.
-   * @returns {{progress:number, required:number, extraLives:number}}
+   * Replaces the active pipe with the front of the queue (preserving the
+   * current horizontal position so control feels continuous) and appends a
+   * fresh random pipe at the bottom of the queue.
+   * @returns {Pipe|null} The new active pipe.
    */
-  getLifeGauge() {
-    return {
-      progress: this.cakeGaugeProgress,
-      required: CONFIG.cakesPerLife,
-      extraLives: this.extraLives,
-    };
+  swapPipe() {
+    if (this._queue.length === 0) return this._activePipe;
+
+    const prevCenterX = this._activePipe ? this._activePipe.centerX : this.canvas.width / 2;
+    const next = this._queue.shift();
+
+    // Active pipe is 1.5× the base length.
+    next.length = this._pipeLength() * CONFIG.activePipeLengthScale;
+    next.thickness = this._pipeThickness();
+    next.centerY = this._pipeCenterY();
+    next.centerX = prevCenterX;
+    next.x = prevCenterX;
+    // Re-clamp in case the new angle has a larger footprint at this position.
+    next.moveBy(0, this.canvas.width);
+
+    this._activePipe = next;
+
+    // New tail of the queue must differ in color from the current last item.
+    const tailColor = this._queue.length > 0
+      ? this._queue[this._queue.length - 1].color
+      : next.color;
+    this._queue.push(this._makePipe(this._randomAngle(), 0, 0, tailColor));
+
+    return this._activePipe;
   }
 
   /**
-   * Spend one extra life if available.
-   * @returns {boolean} true when a life was consumed
+   * Slides the active pipe horizontally.
+   * @param {number} dir - -1 for left, +1 for right, 0 for none
+   * @param {number} [deltaTime=1]
    */
-  consumeExtraLife() {
-    if (this.extraLives <= 0) return false;
-    this.extraLives -= 1;
-    return true;
+  moveActivePipe(dir, deltaTime = 1) {
+    if (!this._activePipe || dir === 0) return;
+    const dx = dir * CONFIG.pipeMoveSpeed * this.scaleFactor * deltaTime;
+    this._activePipe.moveBy(dx, this.canvas.width);
   }
 
-  // ── Spawn Timing ──────────────────────────────────────────────────────────
+  // ── Score / time ─────────────────────────────────────────────────────────
 
   /**
-   * Returns true if a new pipe should be spawned on the current frame.
-   *
-   * A pipe is spawned every CONFIG.pipeSpawnInterval frames (default 90).
-   * The check is skipped when frameCount is 0 to avoid an immediate spawn
-   * at the very first frame of gameplay.
-   *
-   * Requirements: 2.1
-   *
-   * @returns {boolean}
-   */
-  shouldSpawnPipe() {
-    return this.frameCount > 0 && this.frameCount % CONFIG.pipeSpawnInterval === 0;
-  }
-
-  // ── Game Loop Integration ─────────────────────────────────────────────────
-
-  /**
-   * Advances the internal frame counter and updates all pipe positions.
-   * Call once per game-loop frame while in the PLAYING state.
-   *
-   * Requirements: 2.2
-   *
-   * @param {number} [deltaTime=1] - Time step in frames
+   * Advances the survival timer. Call once per frame while PLAYING.
+   * @param {number} [deltaTime=1]
    */
   update(deltaTime = 1) {
-    this.frameCount += deltaTime;
-    this.updatePipes(deltaTime);
+    this.elapsedFrames += deltaTime;
   }
 
-  // ── Reset ─────────────────────────────────────────────────────────────────
+  /** @returns {number} Survival time in seconds (one-decimal precision). */
+  getElapsedSeconds() {
+    return Math.round((this.elapsedFrames / FPS) * 10) / 10;
+  }
+
+  /** @returns {number} The current score (survival seconds). */
+  getScore() {
+    return this.getElapsedSeconds();
+  }
+
+  // ── Reset ──────────────────────────────────────────────────────────────────
 
   /**
-   * Resets the EntityManager to its initial state:
-   * - Clears all pipes
-   * - Resets the frame counter to 0
-   * - Resets the score to 0
-   * - Keeps the Ghosty reference but re-creates her via createGhosty()
-   *
-   * Requirements: 5.8
+   * Resets to a fresh session: new ball, new active pipe + queue, timer at 0.
    */
   reset() {
-    this._pipes = [];
-    this.frameCount = 0;
-    this.score = 0;
-    this._pipesUntilNextCake = this._nextCakePipeGap();
-    this.cakesCollected = 0;
-    this.cakeGaugeProgress = 0;
-    this.extraLives = 0;
-    if (this._ghosty) {
-      // Re-initialise Ghosty to starting position and zero velocity
-      this.createGhosty();
-    }
+    this.elapsedFrames = 0;
+    this.createBall();
+    this.initPipes();
   }
 
-  // ── Scale ─────────────────────────────────────────────────────────────────
+  // ── Scale ──────────────────────────────────────────────────────────────────
 
   /**
-   * Updates the scale factor used when spawning new entities.
-   * Does not retroactively resize already-spawned entities.
-   *
-   * @param {number} scaleFactor - New scale factor
+   * Updates the scale factor used when sizing new entities.
+   * @param {number} scaleFactor
    */
   setScaleFactor(scaleFactor) {
     this.scaleFactor = scaleFactor;
-  }
-
-  /**
-   * Random number of pipes before next cake appears.
-   * @returns {number}
-   * @private
-   */
-  _nextCakePipeGap() {
-    const min = CONFIG.cakeMinPipeGapCount;
-    const max = CONFIG.cakeMaxPipeGapCount;
-    return min + Math.floor(Math.random() * (max - min + 1));
-  }
-
-  /**
-   * Optionally attach a cake to this newly spawned pipe.
-   * @param {Pipe} pipe
-   * @private
-   */
-  _maybeAttachCake(pipe) {
-    this._pipesUntilNextCake -= 1;
-    if (this._pipesUntilNextCake > 0) return;
-
-    pipe.hasCake = true;
-    pipe.cakeCollected = false;
-    pipe.cakeSide = Math.random() < 0.5 ? 'top' : 'bottom';
-    this._pipesUntilNextCake = this._nextCakePipeGap();
   }
 }
 

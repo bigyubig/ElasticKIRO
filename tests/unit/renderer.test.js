@@ -190,15 +190,15 @@ describe('Renderer — drawScore() / renderScore()', () => {
     expect(fillTextSpy).toHaveBeenCalled();
   });
 
-  it('fillText receives the score as a string', () => {
+  it('fillText receives the formatted survival time', () => {
     const canvas = makeCanvas();
     const renderer = new Renderer(canvas, 1);
     const fillTextSpy = jest.spyOn(renderer.ctx, 'fillText');
 
     renderer.drawScore(7);
 
-    // At least one call should contain the score value as text
-    const calledWithScore = fillTextSpy.mock.calls.some(([text]) => text === '7');
+    // Survival time is formatted with one decimal and a trailing "s".
+    const calledWithScore = fillTextSpy.mock.calls.some(([text]) => text === '7.0s');
     expect(calledWithScore).toBe(true);
   });
 
@@ -252,24 +252,23 @@ describe('Renderer — drawScore() / renderScore()', () => {
   });
 });
 
-describe('Renderer — renderLifeGauge()', () => {
-  it('draws gauge text and bars without throwing', () => {
+describe('Renderer — renderQueue()', () => {
+  function makeQueue(n = 5) {
+    return Array.from({ length: n }, (_, i) => ({ angle: CONFIG.pipeAngles[i % CONFIG.pipeAngles.length] }));
+  }
+
+  it('does not throw when drawing the supply queue', () => {
     const canvas = makeCanvas();
     const renderer = new Renderer(canvas, 1);
-    renderer.cakeSprite = null;
-    expect(() =>
-      renderer.renderLifeGauge({ progress: 2, required: 3, extraLives: 1 })
-    ).not.toThrow();
+    expect(() => renderer.renderQueue(makeQueue())).not.toThrow();
   });
 
-  it('calls fillRect and fillText while rendering gauge', () => {
+  it('does nothing for an empty queue', () => {
     const canvas = makeCanvas();
     const renderer = new Renderer(canvas, 1);
     const fillRectSpy = jest.spyOn(renderer.ctx, 'fillRect');
-    const fillTextSpy = jest.spyOn(renderer.ctx, 'fillText');
-    renderer.renderLifeGauge({ progress: 2, required: 3, extraLives: 2 });
-    expect(fillRectSpy).toHaveBeenCalled();
-    expect(fillTextSpy).toHaveBeenCalled();
+    renderer.renderQueue([]);
+    expect(fillRectSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -412,8 +411,9 @@ describe('Renderer — color configuration', () => {
     expect(CONFIG.backgroundColor).toBe('#87CEEB');
   });
 
-  it('CONFIG.pipeColor is #4CAF50', () => {
-    expect(CONFIG.pipeColor).toBe('#4CAF50');
+  it('CONFIG.pipeColors contains 4 colors', () => {
+    expect(Array.isArray(CONFIG.pipeColors)).toBe(true);
+    expect(CONFIG.pipeColors.length).toBe(4);
   });
 
   it('clearCanvas() uses the same color as CONFIG.backgroundColor', () => {

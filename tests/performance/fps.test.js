@@ -56,11 +56,9 @@ describe('Performance - Frame Rate', () => {
 
     engine.handleInput(); // -> playing
     // Keep the simulation alive so we measure steady-state cost.
-    engine.collisionDetector.checkGhostyBoundaryCollision = () => false;
-    engine.collisionDetector.checkGhostyPipeCollision = () => false;
+    engine.collisionDetector.isBelowBottom = () => false;
     // The fake Image instance is not a real drawable; use the placeholder path.
-    engine.entityManager.getGhosty().sprite = null;
-    engine.renderer.cakeSprite = null;
+    engine.entityManager.getBall().sprite = null;
     expect(engine.getState()).toBe(GameState.PLAYING);
 
     const totalFrames = 600; // 10 seconds at 60 FPS

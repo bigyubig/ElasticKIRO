@@ -28,9 +28,6 @@ class AudioSystem {
     /** @type {HTMLAudioElement|null} */
     this._gameOverSound = null;
 
-    /** @type {HTMLAudioElement|null} */
-    this._yummySound = null;
-
     /** @type {boolean} */
     this._muted = false;
   }
@@ -44,16 +41,14 @@ class AudioSystem {
    * @returns {Promise<void>} Always resolves (never rejects).
    */
   async load() {
-    const [jumpResult, gameOverResult, yummyResult] = await Promise.allSettled([
+    const [jumpResult, gameOverResult] = await Promise.allSettled([
       this.loadSound(CONFIG.jumpSoundPath),
       this.loadSound(CONFIG.gameOverSoundPath),
-      this.loadSound(CONFIG.yummySoundPath),
     ]);
 
     // loadSound already returns null on failure, so just assign directly.
     this._jumpSound = jumpResult.status === 'fulfilled' ? jumpResult.value : null;
     this._gameOverSound = gameOverResult.status === 'fulfilled' ? gameOverResult.value : null;
-    this._yummySound = yummyResult.status === 'fulfilled' ? yummyResult.value : null;
   }
 
   /**
@@ -112,13 +107,6 @@ class AudioSystem {
    */
   playGameOver() {
     this._play(this._gameOverSound, 'game_over');
-  }
-
-  /**
-   * Play the yummy reward pickup sound effect.
-   */
-  playYummy() {
-    this._play(this._yummySound, 'yummy');
   }
 
   /**

@@ -154,13 +154,6 @@ describe('AudioSystem', () => {
     });
   });
 
-  describe('playYummy() with null sound', () => {
-    it('does not throw when _yummySound is null', () => {
-      audioSystem._yummySound = null;
-      expect(() => audioSystem.playYummy()).not.toThrow();
-    });
-  });
-
   // ── handleError() — logs to console.error, never throws ─────────────────
 
   describe('handleError()', () => {

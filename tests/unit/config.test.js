@@ -13,39 +13,35 @@ describe('CONFIG', () => {
   });
 
   it('has correct physics constants', () => {
-    expect(CONFIG.gravity).toBe(0.25);
-    expect(CONFIG.flapVelocity).toBe(-4);
-    expect(CONFIG.maxUpwardVelocity).toBe(-5);
-    expect(CONFIG.maxDownwardVelocity).toBe(5);
+    expect(CONFIG.gravity).toBeGreaterThan(0);
+    expect(CONFIG.restitution).toBeGreaterThan(0);
+    expect(CONFIG.restitution).toBeLessThanOrEqual(1);
+    expect(CONFIG.maxSpeed).toBeGreaterThan(0);
+    expect(CONFIG.ballRadius).toBeGreaterThan(0);
+    expect(CONFIG.minBounceUpSpeed).toBeGreaterThan(0);
   });
 
-  it('has correct gameplay constants', () => {
-    expect(CONFIG.pipeSpawnInterval).toBe(140);
-    expect(CONFIG.pipeSpeed).toBe(2);
-    expect(CONFIG.gapHeight).toBe(250);
-    expect(CONFIG.minGapY).toBe(80);
-    expect(CONFIG.maxGapYOffset).toBe(80);
-    expect(CONFIG.cakeScoreBonus).toBe(5);
-    expect(CONFIG.cakeOffsetFromPipe).toBe(30);
-    expect(CONFIG.cakeScale).toBe(1.5);
-    expect(CONFIG.cakeMinPipeGapCount).toBe(3);
-    expect(CONFIG.cakeMaxPipeGapCount).toBe(8);
-    expect(CONFIG.cakesPerLife).toBe(3);
-    expect(CONFIG.reviveInvincibleSeconds).toBe(2);
+  it('has correct pipe/gameplay constants', () => {
+    expect(CONFIG.pipeLength).toBeGreaterThan(0);
+    expect(CONFIG.pipeThickness).toBeGreaterThan(0);
+    expect(CONFIG.pipeMoveSpeed).toBeGreaterThan(0);
+    expect(CONFIG.pipeCenterYOffset).toBeGreaterThan(0);
+    expect(Array.isArray(CONFIG.pipeAngles)).toBe(true);
+    expect(CONFIG.pipeAngles.length).toBeGreaterThan(0);
+    expect(CONFIG.queueSize).toBe(5);
   });
 
   it('has correct visual constants', () => {
-    expect(CONFIG.baseCanvasWidth).toBe(900);
-    expect(CONFIG.aspectRatio).toBeCloseTo(900 / 600, 10);
+    expect(CONFIG.baseCanvasWidth).toBe(800);
+    expect(CONFIG.aspectRatio).toBeCloseTo(800 / 600, 10);
     expect(CONFIG.backgroundColor).toBe('#87CEEB');
-    expect(CONFIG.pipeColor).toBe('#4CAF50');
+    expect(Array.isArray(CONFIG.pipeColors)).toBe(true);
+    expect(CONFIG.pipeColors.length).toBe(4);
   });
 
   it('has correct asset paths', () => {
     expect(CONFIG.ghostySpritePath).toBe('assets/ghosty.png');
-    expect(CONFIG.cakeSpritePath).toBe('assets/cake.png');
     expect(CONFIG.jumpSoundPath).toBe('assets/jump.wav');
-    expect(CONFIG.yummySoundPath).toBe('assets/yummy.wav');
     expect(CONFIG.gameOverSoundPath).toBe('assets/game_over.wav');
   });
 

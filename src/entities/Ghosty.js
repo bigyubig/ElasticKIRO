@@ -1,8 +1,9 @@
 /**
- * Ghosty.js — Player-controlled ghost character entity.
- * Implemented in task 2.2.
+ * Ghosty.js — The player ghost, now a falling ball that bounces off pipes.
  *
- * Requirements: 1.1, 1.2, 1.3, 1.7, 7.1, 7.7, 7.8, 8.1
+ * The ball moves in 2D under gravity. Its position is stored as the top-left of
+ * the bounding box (consistent with Entity), with a radius for circular
+ * collision. Rotation is purely cosmetic (rolls based on horizontal motion).
  */
 
 import { Entity } from './Entity.js';
@@ -10,124 +11,91 @@ import CONFIG from '../config.js';
 
 export class Ghosty extends Entity {
   /**
-   * @param {number} x          - Initial horizontal position
-   * @param {number} y          - Initial vertical position
-   * @param {number} [width=40] - Sprite display width in pixels
-   * @param {number} [height=40] - Sprite display height in pixels
+   * @param {number} x        - Initial top-left x of the bounding box
+   * @param {number} y        - Initial top-left y of the bounding box
+   * @param {number} [radius] - Collision radius in pixels
    */
-  constructor(x, y, width = 40, height = 40) {
-    super(x, y, width, height, 0, 0);
+  constructor(x, y, radius = CONFIG.ballRadius) {
+    super(x, y, radius * 2, radius * 2, 0, 0);
 
-    /**
-     * The loaded sprite image for Ghosty.
-     * Set to null until the image is loaded externally (e.g. by GameEngine).
-     * @type {HTMLImageElement|null}
-     */
+    /** @type {number} Collision radius in pixels. */
+    this.radius = radius;
+
+    /** @type {HTMLImageElement|null} Loaded sprite (set externally). */
     this.sprite = null;
 
-    /**
-     * Current rotation angle in degrees.
-     * Negative = counterclockwise (nose-up), positive = clockwise (nose-down).
-     * @type {number}
-     */
+    /** @type {number} Cosmetic rolling rotation in degrees. */
     this.rotation = 0;
   }
 
   /**
-   * Applies the flap velocity from CONFIG to give Ghosty an upward impulse.
-   * Sets velocityY to CONFIG.flapVelocity (-8 px/frame).
-   *
-   * Requirements: 1.1, 1.2, 1.3, 8.1
+   * Center of the ball.
+   * @returns {{x: number, y: number}}
    */
-  applyFlap() {
-    this.velocityY = CONFIG.flapVelocity;
+  getCenter() {
+    return { x: this.x + this.radius, y: this.y + this.radius };
   }
 
   /**
-   * Updates the rotation angle based on the current vertical velocity.
-   * - Negative velocityY (moving up)  → counterclockwise, clamped at -25°
-   * - Positive velocityY (moving down) → clockwise, clamped at +90°
-   *
-   * The mapping is linear: velocityY is scaled to the rotation range proportionally.
-   * Upward: rotation = (velocityY / CONFIG.maxUpwardVelocity) * (-25)
-   *   When velocityY = -10 → rotation = -25°
-   * Downward: rotation = (velocityY / CONFIG.maxDownwardVelocity) * 90
-   *   When velocityY = 10 → rotation = 90°
-   *
-   * Requirements: 7.7, 7.8
+   * Move the ball so its center sits at (cx, cy).
+   * @param {number} cx
+   * @param {number} cy
    */
-  updateRotation() {
-    if (this.velocityY < 0) {
-      // Moving upward: map [0, maxUpwardVelocity] → [0°, -25°]
-      this.rotation = (this.velocityY / CONFIG.maxUpwardVelocity) * (-25);
-    } else {
-      // Moving downward (or stationary): map [0, maxDownwardVelocity] → [0°, 90°]
-      this.rotation = (this.velocityY / CONFIG.maxDownwardVelocity) * 90;
+  setCenter(cx, cy) {
+    this.x = cx - this.radius;
+    this.y = cy - this.radius;
+  }
+
+  /**
+   * Clamp the velocity vector magnitude to CONFIG.maxSpeed.
+   */
+  clampSpeed() {
+    const speed = Math.hypot(this.velocityX, this.velocityY);
+    if (speed > CONFIG.maxSpeed && speed > 0) {
+      const scale = CONFIG.maxSpeed / speed;
+      this.velocityX *= scale;
+      this.velocityY *= scale;
     }
   }
 
   /**
-   * Applies gravity (CONFIG.gravity) and velocity clamping each frame.
-   * Also updates rotation after computing the new velocity.
-   *
-   * Physics update sequence per frame:
-   *  1. velocityY += CONFIG.gravity * deltaTime
-   *  2. Clamp velocityY to [CONFIG.maxUpwardVelocity, CONFIG.maxDownwardVelocity]
-   *  3. y += velocityY * deltaTime
-   *  4. updateRotation()
-   *
-   * Requirements: 1.4, 1.8
-   *
+   * Advances the ball one frame: gravity, speed clamp, position integration,
+   * and a cosmetic rolling rotation driven by horizontal velocity.
    * @param {number} [deltaTime=1] - Time step in frames
    */
   update(deltaTime = 1) {
-    // 1. Apply gravity
     this.velocityY += CONFIG.gravity * deltaTime;
-
-    // 2. Clamp velocity
-    if (this.velocityY < CONFIG.maxUpwardVelocity) {
-      this.velocityY = CONFIG.maxUpwardVelocity;
-    }
-    if (this.velocityY > CONFIG.maxDownwardVelocity) {
-      this.velocityY = CONFIG.maxDownwardVelocity;
-    }
-
-    // 3. Update position
+    this.clampSpeed();
+    this.x += this.velocityX * deltaTime;
     this.y += this.velocityY * deltaTime;
-
-    // 4. Update rotation based on new velocity
-    this.updateRotation();
+    this.rotation += this.velocityX * deltaTime;
   }
 
   /**
-   * Renders Ghosty onto the canvas with the current rotation applied.
-   * If the sprite is not loaded, falls back to a filled rectangle placeholder.
-   *
-   * Requirements: 7.1, 7.7, 7.8
-   *
-   * @param {CanvasRenderingContext2D} ctx - Canvas 2D rendering context
+   * Renders the ball centered on its bounding box with rolling rotation.
+   * Falls back to a filled circle when the sprite is not yet loaded.
+   * @param {CanvasRenderingContext2D} ctx
    */
   render(ctx) {
-    ctx.save();
+    const c = this.getCenter();
 
-    // Translate to the center of Ghosty for rotation pivot
-    const cx = this.x + this.width / 2;
-    const cy = this.y + this.height / 2;
-    ctx.translate(cx, cy);
+    ctx.save();
+    ctx.translate(c.x, c.y);
     ctx.rotate((this.rotation * Math.PI) / 180);
 
     if (this.sprite) {
       ctx.drawImage(
         this.sprite,
-        -this.width / 2,
-        -this.height / 2,
-        this.width,
-        this.height
+        -this.radius,
+        -this.radius,
+        this.radius * 2,
+        this.radius * 2
       );
     } else {
-      // Placeholder rectangle when sprite is not yet loaded
       ctx.fillStyle = '#ffffff';
-      ctx.fillRect(-this.width / 2, -this.height / 2, this.width, this.height);
+      ctx.beginPath();
+      ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+      ctx.fill();
     }
 
     ctx.restore();

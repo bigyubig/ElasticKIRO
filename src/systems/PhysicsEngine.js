@@ -1,76 +1,97 @@
 /**
- * PhysicsEngine.js — Applies gravity, velocity clamping, and position updates.
- * Implemented in task 3.1.
- *
- * Requirements: 1.4, 1.8, 8.1, 8.2, 8.3, 8.4, 8.5
+ * PhysicsEngine.js — Gravity, velocity integration, speed clamping, and
+ * reflection of the ball off an angled surface.
  */
 
 import CONFIG from '../config.js';
 
 /**
  * @typedef {Object} PhysicsConfig
- * @property {number} gravity              - Gravitational acceleration (px/frame²)
- * @property {number} flapVelocity         - Velocity applied on flap input (px/frame)
- * @property {number} maxUpwardVelocity    - Maximum upward speed, most negative (px/frame)
- * @property {number} maxDownwardVelocity  - Maximum downward speed, most positive (px/frame)
+ * @property {number} gravity     - Gravitational acceleration (px/frame²)
+ * @property {number} maxSpeed    - Maximum speed magnitude (px/frame)
+ * @property {number} restitution - Fraction of speed kept after a bounce (0..1)
  */
 
 export class PhysicsEngine {
   /**
-   * @param {Partial<PhysicsConfig>} [config={}] - Optional overrides for physics constants.
-   *   Defaults to values from CONFIG.
+   * @param {Partial<PhysicsConfig>} [config={}] - Optional overrides.
    */
   constructor(config = {}) {
     this.gravity = config.gravity ?? CONFIG.gravity;
-    this.flapVelocity = config.flapVelocity ?? CONFIG.flapVelocity;
-    this.maxUpwardVelocity = config.maxUpwardVelocity ?? CONFIG.maxUpwardVelocity;
-    this.maxDownwardVelocity = config.maxDownwardVelocity ?? CONFIG.maxDownwardVelocity;
+    this.maxSpeed = config.maxSpeed ?? CONFIG.maxSpeed;
+    this.restitution = config.restitution ?? CONFIG.restitution;
+    this.minBounceUpSpeed = config.minBounceUpSpeed ?? CONFIG.minBounceUpSpeed;
   }
 
   /**
    * Applies gravitational acceleration to an entity's vertical velocity.
-   * Increments velocityY by gravity * deltaTime each call.
-   *
-   * @param {import('../entities/Entity.js').Entity} entity - The entity to update
-   * @param {number} [deltaTime=1] - Time step in frames
+   * @param {import('../entities/Entity.js').Entity} entity
+   * @param {number} [deltaTime=1]
    */
   applyGravity(entity, deltaTime = 1) {
     entity.velocityY += this.gravity * deltaTime;
   }
 
   /**
-   * Clamps an entity's vertical velocity to the configured min/max range.
-   * Prevents velocityY from exceeding terminal velocities in either direction.
-   *
-   * @param {import('../entities/Entity.js').Entity} entity - The entity to clamp
+   * Clamps an entity's velocity vector magnitude to maxSpeed.
+   * @param {import('../entities/Entity.js').Entity} entity
    */
-  clampVelocity(entity) {
-    if (entity.velocityY < this.maxUpwardVelocity) {
-      entity.velocityY = this.maxUpwardVelocity;
-    } else if (entity.velocityY > this.maxDownwardVelocity) {
-      entity.velocityY = this.maxDownwardVelocity;
+  clampSpeed(entity) {
+    const speed = Math.hypot(entity.velocityX, entity.velocityY);
+    if (speed > this.maxSpeed && speed > 0) {
+      const scale = this.maxSpeed / speed;
+      entity.velocityX *= scale;
+      entity.velocityY *= scale;
     }
   }
 
   /**
-   * Updates an entity's vertical position based on its current velocity.
-   * Adds velocityY * deltaTime to the entity's y coordinate.
-   *
-   * @param {import('../entities/Entity.js').Entity} entity - The entity to move
-   * @param {number} [deltaTime=1] - Time step in frames
+   * Integrates an entity's position by its current velocity along both axes.
+   * @param {import('../entities/Entity.js').Entity} entity
+   * @param {number} [deltaTime=1]
    */
   updatePosition(entity, deltaTime = 1) {
+    entity.x += entity.velocityX * deltaTime;
     entity.y += entity.velocityY * deltaTime;
   }
 
   /**
-   * Applies an instantaneous flap by setting velocityY to the configured flapVelocity.
-   * This is always a fixed value regardless of current velocity.
+   * Reflects an entity's velocity about a surface normal, scaled by restitution.
+   * The result is forced to have an upward (negative-y) component so the ball
+   * always bounces up, never gets knocked straight down.
    *
-   * @param {import('../entities/Entity.js').Entity} entity - The entity to flap
+   * v' = v - 2 (v·n) n, then scaled by restitution.
+   *
+   * @param {import('../entities/Entity.js').Entity} entity
+   * @param {{x:number, y:number}} normal       - Unit surface normal
+   * @param {number} [restitution=this.restitution]
    */
-  applyFlap(entity) {
-    entity.velocityY = this.flapVelocity;
+  reflect(entity, normal, restitution = this.restitution) {
+    // Normalize the incoming normal defensively.
+    const nLen = Math.hypot(normal.x, normal.y) || 1;
+    const nx = normal.x / nLen;
+    const ny = normal.y / nLen;
+
+    const dot = entity.velocityX * nx + entity.velocityY * ny;
+    let rvx = entity.velocityX - 2 * dot * nx;
+    let rvy = entity.velocityY - 2 * dot * ny;
+
+    rvx *= restitution;
+    rvy *= restitution;
+
+    // Guarantee an upward result, and enforce a minimum upward speed so a
+    // slow-speed hit still gives the ball a meaningful lift.
+    if (rvy >= 0) {
+      rvy = -Math.abs(rvy) - 0.001;
+    }
+    if (-rvy < this.minBounceUpSpeed) {
+      rvy = -this.minBounceUpSpeed;
+    }
+
+    entity.velocityX = rvx;
+    entity.velocityY = rvy;
+
+    this.clampSpeed(entity);
   }
 }
 
