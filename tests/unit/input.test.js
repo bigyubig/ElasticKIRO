@@ -14,7 +14,27 @@ import { InputHandler, InputType } from '../../src/engine/InputHandler.js';
 
 /** Create a minimal canvas element backed by jsdom. */
 function makeCanvas() {
-  return document.createElement('canvas');
+  const canvas = document.createElement('canvas');
+  // Set intrinsic size to match the mocked CSS layout rect so scale = 1:1.
+  canvas.width = 400;
+  canvas.height = 300;
+  canvas.getBoundingClientRect = () => ({
+    left: 0,
+    top: 0,
+    width: 400,
+    height: 300,
+    right: 400,
+    bottom: 300,
+  });
+  return canvas;
+}
+
+function makeTouchEvent(type, clientX) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'touches', {
+    value: clientX === null ? [] : [{ clientX }],
+  });
+  return event;
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +182,36 @@ describe('InputHandler', () => {
       expect(callback).not.toHaveBeenCalledWith(InputType.CLICK);
       expect(callback).not.toHaveBeenCalledWith(InputType.SPACEBAR);
       expect(callback).toHaveBeenCalledWith(InputType.TOUCH);
+    });
+
+    it('sets touchTargetX to canvas-relative X on touchstart', () => {
+      handler.attach(callback);
+      // Canvas is 400 px wide (CSS), canvas.width = 400 — scale = 1.
+      // clientX 100 → canvas X 100 (left quarter).
+      canvas.dispatchEvent(makeTouchEvent('touchstart', 100));
+      expect(handler.getTouchTargetX()).toBeCloseTo(100, 0);
+    });
+
+    it('sets touchTargetX to canvas-relative X on right side', () => {
+      handler.attach(callback);
+      // clientX 300 → canvas X 300.
+      canvas.dispatchEvent(makeTouchEvent('touchstart', 300));
+      expect(handler.getTouchTargetX()).toBeCloseTo(300, 0);
+    });
+
+    it('updates touchTargetX on touchmove and clears it on touchend', () => {
+      handler.attach(callback);
+      canvas.dispatchEvent(makeTouchEvent('touchstart', 100));
+      canvas.dispatchEvent(makeTouchEvent('touchmove', 300));
+      expect(handler.getTouchTargetX()).toBeCloseTo(300, 0);
+
+      canvas.dispatchEvent(makeTouchEvent('touchend', null));
+      expect(handler.getTouchTargetX()).toBeNull();
+    });
+
+    it('getTouchTargetX is null before any touch', () => {
+      handler.attach(callback);
+      expect(handler.getTouchTargetX()).toBeNull();
     });
   });
 

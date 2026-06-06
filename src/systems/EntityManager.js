@@ -180,13 +180,24 @@ export class EntityManager {
   }
 
   /**
-   * Slides the active pipe horizontally.
+   * Slides the active pipe horizontally by a direction and speed.
    * @param {number} dir - -1 for left, +1 for right, 0 for none
    * @param {number} [deltaTime=1]
    */
   moveActivePipe(dir, deltaTime = 1) {
     if (!this._activePipe || dir === 0) return;
     const dx = dir * CONFIG.pipeMoveSpeed * this.scaleFactor * deltaTime;
+    this._activePipe.moveBy(dx, this.canvas.width);
+  }
+
+  /**
+   * Move the active pipe so its center aligns with the given canvas-relative X,
+   * clamped so the bar stays fully on screen.  Used for touch/tap control.
+   * @param {number} canvasX - Target canvas X in pixels
+   */
+  setActivePipeX(canvasX) {
+    if (!this._activePipe) return;
+    const dx = canvasX - this._activePipe.centerX;
     this._activePipe.moveBy(dx, this.canvas.width);
   }
 

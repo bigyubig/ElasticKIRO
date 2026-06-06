@@ -360,8 +360,6 @@ export class Renderer {
     ctx.fillText('Tap or press Space to start', cw / 2, ch * 0.52);
     ctx.strokeText('Use \u2190 / \u2192 (or A / D) to move the pipe', cw / 2, ch * 0.6);
     ctx.fillText('Use \u2190 / \u2192 (or A / D) to move the pipe', cw / 2, ch * 0.6);
-    ctx.strokeText('Mobile: tap \u25c4 left / right \u25ba to move', cw / 2, ch * 0.68);
-    ctx.fillText('Mobile: tap \u25c4 left / right \u25ba to move', cw / 2, ch * 0.68);
     ctx.restore();
   }
 
@@ -373,38 +371,6 @@ export class Renderer {
   /** Alias for the menu/waiting screen. */
   drawMenu() {
     this.renderWaitingScreen();
-  }
-
-  /**
-   * Draw subtle left / right touch-zone hints for mobile players.
-   * Renders semi-transparent ◀ and ▶ arrows near the bottom-left and
-   * bottom-right of the canvas so the player knows where to tap.
-   */
-  renderTouchHints() {
-    const ctx = this.ctx;
-    const cw = this.canvas.width;
-    const ch = this.canvas.height;
-    const sf = this.scaleFactor;
-    const arrowSize = Math.round(28 * sf);
-    const margin = Math.round(18 * sf);
-    const y = ch - Math.round(48 * sf);
-
-    ctx.save();
-    ctx.font = `bold ${arrowSize}px Arial, sans-serif`;
-    ctx.fillStyle = 'rgba(255,255,255,0.35)';
-    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
-    ctx.lineWidth = Math.max(1, Math.round(2 * sf));
-    ctx.textBaseline = 'middle';
-
-    ctx.textAlign = 'left';
-    ctx.strokeText('\u25c4', margin, y);
-    ctx.fillText('\u25c4', margin, y);
-
-    ctx.textAlign = 'right';
-    ctx.strokeText('\u25ba', cw - margin, y);
-    ctx.fillText('\u25ba', cw - margin, y);
-
-    ctx.restore();
   }
 }
 

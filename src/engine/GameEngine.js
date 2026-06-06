@@ -134,7 +134,14 @@ export class GameEngine {
     if (!ball) return;
 
     // 1. Player moves the active pipe.
-    this.entityManager.moveActivePipe(this.inputHandler.getMoveDirection(), deltaTime);
+    // Touch: position-based (finger drags / taps pipe directly to that X).
+    // Keyboard: direction-based (hold left/right arrow or A/D).
+    const touchX = this.inputHandler.getTouchTargetX();
+    if (touchX !== null) {
+      this.entityManager.setActivePipeX(touchX);
+    } else {
+      this.entityManager.moveActivePipe(this.inputHandler.getMoveDirection(), deltaTime);
+    }
 
     // 2. Ball physics: gravity, clamp, integrate.
     this.physicsEngine.applyGravity(ball, deltaTime);
@@ -189,7 +196,6 @@ export class GameEngine {
         this.entityManager.getScore(),
         this.stateManager.getHighScore()
       );
-      this.renderer.renderTouchHints();
     } else if (state === GameState.GAME_OVER) {
       this.renderer.drawGameOver(
         this.entityManager.getScore(),

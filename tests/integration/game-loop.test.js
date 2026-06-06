@@ -73,6 +73,18 @@ describe('Game Loop Integration', () => {
     expect(engine.getScore()).toBe(0);
   });
 
+  it('starts from menu without swapping or rebuilding the active pipe', async () => {
+    const engine = await makeEngine();
+    const activePipe = engine.entityManager.getActivePipe();
+    const activeAngle = activePipe.angle;
+
+    engine.handleInput('spacebar');
+
+    expect(engine.getState()).toBe(GameState.PLAYING);
+    expect(engine.entityManager.getActivePipe()).toBe(activePipe);
+    expect(engine.entityManager.getActivePipe().angle).toBe(activeAngle);
+  });
+
   it('accumulates survival time as score while playing', async () => {
     const engine = await makeEngine();
     engine.handleInput();
