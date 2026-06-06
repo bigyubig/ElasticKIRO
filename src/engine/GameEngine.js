@@ -211,9 +211,6 @@ export class GameEngine {
     const state = this.stateManager.getCurrentState();
 
     if (state === GameState.MENU) {
-      this.entityManager.reset();
-      const ball = this.entityManager.getBall();
-      if (ball && this._sprite) ball.sprite = this._sprite;
       this.stateManager.transitionTo(GameState.PLAYING);
     } else if (state === GameState.GAME_OVER) {
       this.reset();
