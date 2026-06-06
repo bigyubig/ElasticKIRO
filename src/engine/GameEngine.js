@@ -189,6 +189,7 @@ export class GameEngine {
         this.entityManager.getScore(),
         this.stateManager.getHighScore()
       );
+      this.renderer.renderTouchHints();
     } else if (state === GameState.GAME_OVER) {
       this.renderer.drawGameOver(
         this.entityManager.getScore(),
@@ -210,7 +211,6 @@ export class GameEngine {
     const state = this.stateManager.getCurrentState();
 
     if (state === GameState.MENU) {
-      // Fresh entities so the game starts cleanly from the top.
       this.entityManager.reset();
       const ball = this.entityManager.getBall();
       if (ball && this._sprite) ball.sprite = this._sprite;
